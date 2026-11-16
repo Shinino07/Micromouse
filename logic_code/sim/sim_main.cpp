@@ -1,6 +1,3 @@
-// Mo phong toan bo: chay dung code core/ (Mouse + Motion) tren mo hinh vat ly + tia IR
-//   sim.exe <maze.txt> [seed] [--quiet]      chay che do AUTO (3 luot) tren me cung
-//   sim.exe --random <so_me_cung> [seed]     kiem tra trinh lap duong tren me cung ngau nhien
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -19,10 +16,9 @@ using namespace mm;
 namespace {
 constexpr double PI = 3.14159265358979;
 
-// ---------------- me cung that ----------------
 struct TrueMaze {
-  bool h[cfg::N + 1][cfg::N] = {};  // tuong ngang tai duong luoi y, o cot x
-  bool v[cfg::N][cfg::N + 1] = {};  // tuong doc tai duong luoi x, hang y
+  bool h[cfg::N + 1][cfg::N] = {};
+  bool v[cfg::N][cfg::N + 1] = {};
   bool wall(int x, int y, Dir d) const {
     switch (d) {
       case NORTH: return h[y + 1][x];
@@ -73,7 +69,7 @@ void random_maze(TrueMaze& t, std::mt19937& rng) {
     seen[y + DY[d]][x + DX[d]] = true;
     st.push_back({x + DX[d], y + DY[d]});
   }
-  for (int k = 0; k < 40; k++) {  // them vong de co nhieu duong
+  for (int k = 0; k < 40; k++) {
     const int x = 1 + rng() % (cfg::N - 2), y = 1 + rng() % (cfg::N - 2);
     knock(x, y, rng() % 4);
   }
@@ -84,9 +80,8 @@ void random_maze(TrueMaze& t, std::mt19937& rng) {
   t.h[1][0] = false;
 }
 
-// ---------------- hinh hoc tuong (hinh chu nhat) ----------------
 struct Rect { double x0, y0, x1, y1; };
-std::vector<Rect> g_rects[cfg::N][cfg::N];  // tuong + cot quanh moi o
+std::vector<Rect> g_rects[cfg::N][cfg::N];
 
 void build_rects(const TrueMaze& t) {
   const double C = cfg::CELL, W = cfg::WALL_HALF;
@@ -140,21 +135,19 @@ bool inside_wall(double x, double y) {
   return false;
 }
 
-// ---------------- robot vat ly ----------------
 struct Robot {
-  double x, y, th;           // th = 0: huong BAC, duong = quay trai
-  double vl = 0, vr = 0;     // mm/s
-  double pl = 0, pr = 0;     // quang duong banh
-  double gyro_bias = 0.004;  // rad/s
+  double x, y, th;
+  double vl = 0, vr = 0;
+  double pl = 0, pr = 0;
+  double gyro_bias = 0.004;
 };
 
 uint32_t g_ms = 0;
 bool g_quiet = false;
 Maze g_flash;
 bool g_flash_ok = false;
-}  // namespace
+}
 
-// ---------------- dich vu hw cho core ----------------
 namespace mm::hw {
 uint32_t millis() { return g_ms; }
 bool btn_mode() { return false; }
@@ -171,7 +164,7 @@ void log(const char* fmt, ...) {
   std::vprintf(fmt, ap);
   va_end(ap);
 }
-}  // namespace mm::hw
+}
 
 namespace {
 
@@ -214,8 +207,8 @@ SimResult simulate(const TrueMaze& tm, uint32_t seed, double max_s) {
   Robot rb;
   rb.x = 0.5 * cfg::CELL;
   rb.y = 0.5 * cfg::CELL + cfg::START_OFFSET;
+  if (const char* dy = std::getenv("SIM_DY")) rb.y += std::atof(dy);
   rb.th = 0;
-  // sai lech mo hinh so voi tham so trong config (robot that khong bao gio khop)
   const double kv_err[2] = {1.0 + 0.06 * nrm(rng), 1.0 + 0.06 * nrm(rng)};
   const double ka_err = 1.0 + 0.10 * nrm(rng);
   const double ri_err = 1.0 + 0.15 * nrm(rng);
@@ -231,12 +224,13 @@ SimResult simulate(const TrueMaze& tm, uint32_t seed, double max_s) {
 
   for (uint64_t tick = 0; tick < static_cast<uint64_t>(max_s * 1000); tick++) {
     g_ms = static_cast<uint32_t>(tick);
-    // IR: moi tick cap nhat 1 nhom (giong port STM32)
     const int grp = tick % 3;
     for (int i = 0; i < cfg::IR_COUNT; i++) {
-      const int gi = i == cfg::IR_F ? 0 : ((i == cfg::IR_L || i == cfg::IR_R) ? 1 : 2);   // truoc / ben / cheo
+      const int gi = i == cfg::IR_F ? 0 : ((i == cfg::IR_L || i == cfg::IR_R) ? 1 : 2);
       if (gi != grp) continue;
-      const cfg::IrPose& p = cfg::IR_POSE[i];
+      cfg::IrPose p = cfg::IR_POSE[i];
+      static const char* sfw = std::getenv("SIM_SIDEFWD");
+      if (sfw && (i == cfg::IR_L || i == cfg::IR_R)) p.fwd = static_cast<float>(std::atof(sfw));
       const double hx = -std::sin(rb.th), hy = std::cos(rb.th);
       const double lx = -hy, ly = hx;
       const double ox = rb.x + hx * p.fwd + lx * p.lat, oy = rb.y + hy * p.fwd + ly * p.lat;
@@ -244,24 +238,49 @@ SimResult simulate(const TrueMaze& tm, uint32_t seed, double max_s) {
       double d = raycast(ox, oy, -std::sin(a), std::cos(a), 260.0);
       if (d >= 250.0) ir[i] = cfg::IR_NONE;
       else ir[i] = static_cast<float>(d * (1.0 + 0.015 * nrm(rng)) + 0.5 * nrm(rng));
-      // mat that bao hoa khi qua gan: doc ~ nguong bao hoa (dung im) chu khong phai khoang cach that
       if (ir[i] < cfg::IR_SAT_MM[i]) ir[i] = cfg::IR_SAT_MM[i] - 1.0f + 0.3f * static_cast<float>(nrm(rng));
+      static const double fscale = std::getenv("SIM_FSCALE") ? std::atof(std::getenv("SIM_FSCALE")) : 1.0;
+      if (i == cfg::IR_F && fscale != 1.0 && ir[i] < cfg::IR_NONE) {
+        ir[i] = static_cast<float>(ir[i] * fscale);
+        if (ir[i] >= 250.0f) ir[i] = cfg::IR_NONE;
+      }
+      static const double ffloor = std::getenv("SIM_FFLOOR") ? std::atof(std::getenv("SIM_FFLOOR")) : 0.0;
+      if (i == cfg::IR_F && ffloor > 0 && std::fabs(rb.vl) + std::fabs(rb.vr) > 60.0)
+        ir[i] = std::fmin(ir[i], static_cast<float>(ffloor + 10.0 * nrm(rng)));
+      static const double fcap = std::getenv("SIM_FCAP") ? std::atof(std::getenv("SIM_FCAP")) : 0.0;
+      if (i == cfg::IR_F && fcap > 0) ir[i] = std::fmin(ir[i], static_cast<float>(fcap + 8.0 * nrm(rng)));
+      static const double fmb = std::getenv("SIM_FMOVEBIAS") ? std::atof(std::getenv("SIM_FMOVEBIAS")) : 0.0;
+      if (i == cfg::IR_F && fmb > 0 && d < 170.0 && std::fabs(rb.vl) + std::fabs(rb.vr) > 120.0)
+        ir[i] = std::fmax(cfg::IR_SAT_MM[i] - 1.0f, ir[i] - static_cast<float>(fmb));
+      static const double fspike = std::getenv("SIM_FSPIKE") ? std::atof(std::getenv("SIM_FSPIKE")) : 0.0;
+      if (i == cfg::IR_F && fspike > 0 && std::uniform_real_distribution<double>(0, 1)(rng) < fspike)
+        ir[i] = static_cast<float>(std::uniform_real_distribution<double>(60, 180)(rng));
     }
 
     TickIn in;
-    // encoder that dem nguoc theo ENC_SIGN (banh phai dem am khi tien) + luong tu hoa 1 xung
-    in.enc_l = cfg::ENC_SIGN_L * static_cast<int32_t>(std::floor(rb.pl * cfg::COUNTS_PER_MM_L));
-    in.enc_r = cfg::ENC_SIGN_R * static_cast<int32_t>(std::floor(rb.pr * cfg::COUNTS_PER_MM_R));
+    static const double odo = std::getenv("SIM_ODO") ? std::atof(std::getenv("SIM_ODO")) : 1.0;
+    in.enc_l = cfg::ENC_SIGN_L * static_cast<int32_t>(std::floor(rb.pl * odo * cfg::COUNTS_PER_MM_L));
+    in.enc_r = cfg::ENC_SIGN_R * static_cast<int32_t>(std::floor(rb.pr * odo * cfg::COUNTS_PER_MM_R));
     const double w_true = (rb.vr - rb.vl) / cfg::TRACK_MM;
-    // gyro that lap nguoc (GYRO_SIGN) va lech he so (GYRO_SCALE): controller tinh w = gyro * SIGN * SCALE
     in.gyro_z = static_cast<float>(cfg::GYRO_SIGN * w_true / cfg::GYRO_SCALE + rb.gyro_bias + 0.01 * nrm(rng));
+    {
+      static const long nogyro = std::getenv("SIM_NOGYRO") ? std::atol(std::getenv("SIM_NOGYRO")) : -1;
+      static int32_t pl0 = 0, pr0 = 0;
+      if (tick == 0) { pl0 = in.enc_l; pr0 = in.enc_r; }
+      if (nogyro >= 0 && static_cast<long>(tick) >= nogyro) {
+        const float vl = cfg::ENC_SIGN_L * (in.enc_l - pl0) / cfg::COUNTS_PER_MM_L;
+        const float vr = cfg::ENC_SIGN_R * (in.enc_r - pr0) / cfg::COUNTS_PER_MM_R;
+        in.gyro_z = cfg::GYRO_SIGN * (vr - vl) / cfg::TRACK_MM / cfg::DT_S;
+        in.gyro_enc = true;
+      }
+      pl0 = in.enc_l;
+      pr0 = in.enc_r;
+    }
     for (int i = 0; i < cfg::IR_COUNT; i++) in.ir[i] = ir[i];
     in.vbat = static_cast<float>(cfg::VBAT_NOMINAL * (1.0 - 0.05 * tick / (max_s * 1000)));
     TickOut out;
     mouse.tick(in, out);
 
-    // dong co: V = KV*v*(sai lech) + KA*a + KS*sign
-    // tach thanh phan tinh tien / xoay: quan tinh xoay = ROT_INERTIA (co sai lech)
     const double duty[2] = {out.duty_l * cfg::MOTOR_SIGN_L, out.duty_r * cfg::MOTOR_SIGN_R};
     const double vv[2] = {rb.vl, rb.vr};
     double F[2];
@@ -287,7 +306,6 @@ SimResult simulate(const TrueMaze& tm, uint32_t seed, double max_s) {
     rb.x += -std::sin(rb.th) * v * dt;
     rb.y += std::cos(rb.th) * v * dt;
 
-    // va cham: kiem tra vien robot
     bool hit = false;
     const double hx = -std::sin(rb.th), hy = std::cos(rb.th), lx = -hy, ly = hx;
     for (double f : {cfg::ROBOT_FRONT * 1.0, 0.0, -cfg::ROBOT_BACK * 1.0})
@@ -296,7 +314,6 @@ SimResult simulate(const TrueMaze& tm, uint32_t seed, double max_s) {
         if (inside_wall(rb.x + hx * f + lx * l, rb.y + hy * f + ly * l)) hit = true;
       }
     if (tick % 5 == 0) {
-      // khoang ho nho nhat tu vien robot toi tuong / cot
       double cl = 1e9;
       for (double f = -cfg::ROBOT_BACK; f <= cfg::ROBOT_FRONT + 0.1; f += 10.0)
         for (double l : {cfg::ROBOT_HALF_WIDTH * 1.0, -cfg::ROBOT_HALF_WIDTH * 1.0}) {
@@ -332,7 +349,6 @@ SimResult simulate(const TrueMaze& tm, uint32_t seed, double max_s) {
                     mouse.motion().move_turn(), rb.x, rb.y, (th - q) * 180 / PI, lat, mouse.motion().wall_term_dbg());
       }
       if (std::getenv("SIM_TURNLOG")) {
-        // lech ngang so voi duong cheo qua trung diem mep o (x -+ y = 90 mod 180)
         static double diag_max = 0;
         static bool in_diag = false;
         const double th = std::remainder(rb.th, 2 * PI);
@@ -362,7 +378,6 @@ SimResult simulate(const TrueMaze& tm, uint32_t seed, double max_s) {
       prev_type = mt;
     }
     if (const char* at = std::getenv("SIM_ALIGN")) {
-      // test can tuong: robot o tam o (0,0) quay mat NAM, lech (ngang, doc, goc do) = SIM_ALIGN
       if (tick == 0) {
         double ox = 0, oy = 0, og = 0;
         std::sscanf(at, "%lf,%lf,%lf", &ox, &oy, &og);
@@ -380,7 +395,11 @@ SimResult simulate(const TrueMaze& tm, uint32_t seed, double max_s) {
       continue;
     }
     mouse.loop();
-    if (!started) { mouse.start(Mode::AUTO); started = true; }
+    if (!started) {
+      const char* sm = std::getenv("SIM_MODE");
+      mouse.start(sm ? static_cast<Mode>(std::atoi(sm)) : Mode::AUTO);
+      started = true;
+    }
     if (mouse.had_fault()) { res.fault = true; break; }
     if (started && tick > 2000 && mouse.idle()) { res.finished = true; break; }
   }
@@ -393,7 +412,6 @@ SimResult simulate(const TrueMaze& tm, uint32_t seed, double max_s) {
   return res;
 }
 
-// Kiem tra trinh bien dich duong (khong vat ly): ban do biet het
 int planner_test(int count, uint32_t seed) {
   std::mt19937 rng(seed);
   init_turns();
@@ -409,7 +427,6 @@ int planner_test(int count, uint32_t seed) {
         for (int d = 0; d < 4; d++) m.set_wall(x, y, static_cast<Dir>(d), t.wall(x, y, static_cast<Dir>(d)));
     Route r;
     if (!find_route(m, 0, NORTH, goal_mask(), false, r)) { fails++; continue; }
-    // vong ve: tu dich ve o xuat phat
     for (int pass = 0; pass < 2; pass++) {
       Route rr = r;
       uint8_t end_cell = rr.cell[rr.n - 1];
@@ -442,9 +459,8 @@ int planner_test(int count, uint32_t seed) {
   return fails;
 }
 
-}  // namespace
+}
 
-// Khe ho tung move cua duong nhanh nhat tren me cung da biet het
 void clearance_report(const TrueMaze& t) {
   init_turns();
   Maze m;
@@ -456,7 +472,7 @@ void clearance_report(const TrueMaze& t) {
   if (!find_route(m, 0, NORTH, goal_mask(), false, r)) return;
   static Move mv[400];
   const int n = compile_route(r, NORTH, 0.0f, cfg::RUN_FAST, mv, 400);
-  static const char* TN[] = {"S90", "F90", "F180", "IN45", "OUT45", "IN135", "OUT135", "V90"};
+  static const char* TN[] = {"S90", "F90", "F180", "IN45", "OUT45", "IN135", "OUT135", "V90", "DYN"};
   float prev = 1e9f;
   for (int k = 1; k <= n; k++) {
     const float c = path_clearance(mv, k, 0, NORTH, 0.0f, m);
@@ -483,7 +499,6 @@ int main(int argc, char** argv) {
     const int n = std::atoi(argv[2]);
     const uint32_t seed = argc >= 4 ? static_cast<uint32_t>(std::atoi(argv[3])) : 1;
     int bad = planner_test(n, seed);
-    // vat ly tren vai me cung ngau nhien
     g_quiet = true;
     std::mt19937 rng(seed + 99);
     int phys_bad = 0;

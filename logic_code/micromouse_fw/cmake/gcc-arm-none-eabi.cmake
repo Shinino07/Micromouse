@@ -4,8 +4,6 @@ set(CMAKE_SYSTEM_PROCESSOR          arm)
 set(CMAKE_C_COMPILER_ID GNU)
 set(CMAKE_CXX_COMPILER_ID GNU)
 
-# Some default GCC settings
-# arm-none-eabi- must be part of path environment
 set(TOOLCHAIN_PREFIX                arm-none-eabi-)
 
 set(CMAKE_C_COMPILER                ${TOOLCHAIN_PREFIX}gcc)
@@ -21,16 +19,11 @@ set(CMAKE_EXECUTABLE_SUFFIX_CXX     ".elf")
 
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
-# MCU specific flags
 set(TARGET_FLAGS "-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard ")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${TARGET_FLAGS}")
 set(CMAKE_ASM_FLAGS "${CMAKE_C_FLAGS} -x assembler-with-cpp -MMD -MP")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -fdata-sections -ffunction-sections -fstack-usage")
-
-# The cyclomatic-complexity parameter must be defined for the Cyclomatic complexity feature in STM32CubeIDE to work.
-# However, most GCC toolchains do not support this option, which causes a compilation error; for this reason, the feature is disabled by default.
-# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fcyclomatic-complexity")
 
 set(CMAKE_C_FLAGS_DEBUG "-Og -g3")
 set(CMAKE_C_FLAGS_RELEASE "-Os -g0")

@@ -1,23 +1,5 @@
 /* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
-  * @file    adc.c
-  * @brief   This file provides code for the configuration
-  *          of the ADC instances.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
 /* USER CODE END Header */
-/* Includes ------------------------------------------------------------------*/
 #include "adc.h"
 
 /* USER CODE BEGIN 0 */
@@ -27,7 +9,6 @@
 ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
 
-/* ADC1 init function */
 void MX_ADC1_Init(void)
 {
 
@@ -41,8 +22,6 @@ void MX_ADC1_Init(void)
 
   /* USER CODE END ADC1_Init 1 */
 
-  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
-  */
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
@@ -60,8 +39,6 @@ void MX_ADC1_Init(void)
     Error_Handler();
   }
 
-  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
-  */
   sConfig.Channel = ADC_CHANNEL_3;
   sConfig.Rank = 1;
   sConfig.SamplingTime = ADC_SAMPLETIME_56CYCLES;
@@ -70,8 +47,6 @@ void MX_ADC1_Init(void)
     Error_Handler();
   }
 
-  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
-  */
   sConfig.Channel = ADC_CHANNEL_4;
   sConfig.Rank = 2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
@@ -79,8 +54,6 @@ void MX_ADC1_Init(void)
     Error_Handler();
   }
 
-  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
-  */
   sConfig.Channel = ADC_CHANNEL_8;
   sConfig.Rank = 3;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
@@ -88,8 +61,6 @@ void MX_ADC1_Init(void)
     Error_Handler();
   }
 
-  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
-  */
   sConfig.Channel = ADC_CHANNEL_9;
   sConfig.Rank = 4;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
@@ -97,8 +68,6 @@ void MX_ADC1_Init(void)
     Error_Handler();
   }
 
-  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
-  */
   sConfig.Channel = ADC_CHANNEL_10;
   sConfig.Rank = 5;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
@@ -120,19 +89,11 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
   /* USER CODE BEGIN ADC1_MspInit 0 */
 
   /* USER CODE END ADC1_MspInit 0 */
-    /* ADC1 clock enable */
     __HAL_RCC_ADC1_CLK_ENABLE();
 
     __HAL_RCC_GPIOC_CLK_ENABLE();
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
-    /**ADC1 GPIO Configuration
-    PC0     ------> ADC1_IN10
-    PA3     ------> ADC1_IN3
-    PA4     ------> ADC1_IN4
-    PB0     ------> ADC1_IN8
-    PB1     ------> ADC1_IN9
-    */
     GPIO_InitStruct.Pin = IR_5_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -148,8 +109,6 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-    /* ADC1 DMA Init */
-    /* ADC1 Init */
     hdma_adc1.Instance = DMA2_Stream0;
     hdma_adc1.Init.Channel = DMA_CHANNEL_0;
     hdma_adc1.Init.Direction = DMA_PERIPH_TO_MEMORY;
@@ -181,23 +140,14 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
   /* USER CODE BEGIN ADC1_MspDeInit 0 */
 
   /* USER CODE END ADC1_MspDeInit 0 */
-    /* Peripheral clock disable */
     __HAL_RCC_ADC1_CLK_DISABLE();
 
-    /**ADC1 GPIO Configuration
-    PC0     ------> ADC1_IN10
-    PA3     ------> ADC1_IN3
-    PA4     ------> ADC1_IN4
-    PB0     ------> ADC1_IN8
-    PB1     ------> ADC1_IN9
-    */
     HAL_GPIO_DeInit(IR_5_GPIO_Port, IR_5_Pin);
 
     HAL_GPIO_DeInit(GPIOA, IR_1_Pin|IR_2_Pin);
 
     HAL_GPIO_DeInit(GPIOB, IR_3_Pin|IR_4_Pin);
 
-    /* ADC1 DMA DeInit */
     HAL_DMA_DeInit(adcHandle->DMA_Handle);
   /* USER CODE BEGIN ADC1_MspDeInit 1 */
 
@@ -208,4 +158,3 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
-

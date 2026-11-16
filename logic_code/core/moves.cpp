@@ -5,13 +5,11 @@
 namespace mm {
 
 TurnGeom g_turn[T_COUNT];
-// chon theo khe ho lon nhat toi cot (sim --clear): S90 F90 F180 IN45 OUT45 IN135 OUT135 V90
-float g_turn_frac[T_COUNT] = {1.0f, 0.8f, 1.0f, 1.0f, 1.0f, 0.75f, 0.75f, 0.7f};
+float g_turn_frac[T_COUNT] = {1.0f, 0.8f, 1.0f, 1.0f, 1.0f, 0.75f, 0.75f, 0.7f, 1.0f};
 
 namespace {
 constexpr float PI = 3.14159265f;
 
-// Duong cong don vi (dai 1): theta(u) = TH*(u - sin(2*pi*u)/(2*pi))
 void unit_curve(float th, float& ex, float& ey, float& xmax) {
   const int n = 2000;
   double x = 0, y = 0, xm = 0;
@@ -31,14 +29,12 @@ void make_turn(TurnType t, float fwd, float lat, float theta) {
   unit_curve(theta, cx, cy, xm);
   g.theta = theta; g.end_fwd = fwd; g.end_lat = lat;
   if (t == T_FAST180) {
-    // lat = L*cy; dinh cung nam tren duong tam cua o ke (cach diem bat dau 180 mm)
     g.curve = lat / cy;
     g.pre = g.post = std::fmax(0.0f, cfg::CELL - g.curve * xm);
   } else {
-    // end = pre*(1,0) + L*(cx,cy) + post*(cos,sin); chon L lon nhat ma pre, post >= 0
     const float s = std::sin(theta), c = std::cos(theta);
-    const float a2 = lat / s, b2 = cy / s;                      // post = a2 - b2*L
-    const float a1 = fwd - c * a2, b1 = cx - c * b2;            // pre  = a1 - b1*L
+    const float a2 = lat / s, b2 = cy / s;
+    const float a1 = fwd - c * a2, b1 = cx - c * b2;
     float L = 1e9f;
     if (b1 > 1e-6f) L = std::fmin(L, a1 / b1);
     if (b2 > 1e-6f) L = std::fmin(L, a2 / b2);
@@ -49,7 +45,7 @@ void make_turn(TurnType t, float fwd, float lat, float theta) {
   }
   g.kmax = 2.0f * theta / g.curve;
 }
-}  // namespace
+}
 
 void init_turns() {
   const float H = cfg::HALF, C = cfg::CELL;
@@ -62,7 +58,10 @@ void init_turns() {
   make_turn(T_IN135, H, C, 3 * PI / 4);
   make_turn(T_OUT135, (C - H) * r2, (C + H) * r2, 3 * PI / 4);
   make_turn(T_V90, C * r2, C * r2, PI / 2);
+  make_turn(T_DYN, H, H, PI / 2);
 }
+
+void set_dyn_turn(float fwd, float lat, float theta) { make_turn(T_DYN, fwd, lat, theta); }
 
 float turn_curvature(const TurnGeom& g, float s) {
   const float u = (s - g.pre) / g.curve;
@@ -74,7 +73,6 @@ float turn_curvature(const TurnGeom& g, float s) {
 float turn_speed(TurnType t, const cfg::RunParams& rp) {
   const float k = g_turn[t].kmax;
   float v = std::sqrt(rp.a_lat / k);
-  // banh ngoai chay nhanh hon tam robot
   v = std::fmin(v, 0.9f * cfg::V_WHEEL_MAX / (1.0f + k * 0.5f * cfg::TRACK_MM));
   return std::fmin(v, t == T_SEARCH90 ? rp.v_search : rp.v_turn_cap);
 }
@@ -131,7 +129,7 @@ namespace {
 enum class Node : uint8_t { CENTER, EDGE, DIAG };
 inline Act opp(Act a) { return a == ACT_L ? ACT_R : ACT_L; }
 inline int8_t sgn(Act a) { return a == ACT_L ? 1 : -1; }
-}  // namespace
+}
 
 int compile_route(const Route& r, Dir heading, float start_offset, const cfg::RunParams& rp,
                   Move* out, int max_moves) {
@@ -176,8 +174,6 @@ int compile_route(const Route& r, Dir heading, float start_offset, const cfg::Ru
     dacc = 0;
   };
 
-  // Cua toc do cao chi khi da co da (khong phai cua ngay tu luc dung yen)
-  // va con it nhat 1 o phia sau de phanh
   auto moving = [&]() {
     if (acc + node_off > 40.0f) return true;
     return n_out > 0 && out[n_out - 1].type != MoveType::PIVOT;
@@ -216,7 +212,6 @@ int compile_route(const Route& r, Dir heading, float start_offset, const cfg::Ru
       i++;
       continue;
     }
-    // DIAG: dang vao o i theo huong cheo
     if (a == ACT_S) { ok = false; break; }
     const Act a1 = tok(i + 1);
     if (a1 == opp(a) && i + 1 < n) { dacc++; i++; continue; }
@@ -272,12 +267,12 @@ bool verify_moves(const Move* mv, int n, uint8_t start_cell, Dir heading, float 
   double y = (cell_y(start_cell) + 0.5) * cfg::CELL + std::cos(th) * start_offset;
   for (int i = 0; i < n; i++) {
     const Move& m = mv[i];
-    const double hx = -std::sin(th), hy = std::cos(th);  // huong tien (NORTH = +y)
+    const double hx = -std::sin(th), hy = std::cos(th);
     if (m.type == MoveType::STRAIGHT || m.type == MoveType::DIAG) {
       x += hx * m.dist; y += hy * m.dist;
     } else if (m.type == MoveType::TURN) {
       const TurnGeom& g = g_turn[m.turn];
-      const double lx = -hy * m.dir, ly = hx * m.dir;  // vector ve phia re
+      const double lx = -hy * m.dir, ly = hx * m.dir;
       x += hx * g.end_fwd + lx * g.end_lat;
       y += hy * g.end_fwd + ly * g.end_lat;
       th += m.dir * g.theta;
@@ -291,7 +286,6 @@ bool verify_moves(const Move* mv, int n, uint8_t start_cell, Dir heading, float 
 }
 
 namespace {
-// khoang cach tu diem toi hinh chu nhat [x0,x1]x[y0,y1] (0 neu nam trong)
 inline float rect_dist(float px, float py, float x0, float y0, float x1, float y1) {
   const float dx = std::fmax(std::fmax(x0 - px, 0.0f), px - x1);
   const float dy = std::fmax(std::fmax(y0 - py, 0.0f), py - y1);
@@ -332,7 +326,7 @@ float footprint_clearance(float x, float y, float th, const Maze& m) {
   }
   return best;
 }
-}  // namespace
+}
 
 float path_clearance(const Move* mv, int n, uint8_t start_cell, Dir heading, float start_offset, const Maze& m) {
   float th = heading_rad(heading);
@@ -367,4 +361,4 @@ float path_clearance(const Move* mv, int n, uint8_t start_cell, Dir heading, flo
   return best;
 }
 
-}  // namespace mm
+}

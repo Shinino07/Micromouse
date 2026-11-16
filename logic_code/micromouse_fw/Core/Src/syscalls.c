@@ -1,4 +1,3 @@
-/* syscalls.c - ham he thong toi thieu cho newlib, theo mau STM32CubeIDE */
 #include <errno.h>
 #include <signal.h>
 #include <stdint.h>

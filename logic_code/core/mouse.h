@@ -5,24 +5,25 @@
 namespace mm {
 
 enum class Mode : uint8_t {
-  AUTO,           // 3 luot lien tiep: do duong -> nhanh an toan -> nhanh nhat
+  AUTO,
+  FOLLOW,
   EXPLORE,
   FAST_SAFE,
   FAST_MAX,
-  TEST_STRAIGHT,  // chay thang 5 o (do xung/mm, chinh KV)
-  TEST_PIVOT,     // xoay tai cho 10 vong (do TRACK, GYRO_SCALE)
-  TEST_SENSORS,   // in IR + nhan tuong qua UART
-  ERASE,          // xoa ban do
+  TEST_STRAIGHT,
+  TEST_PIVOT,
+  TEST_SENSORS,
+  ERASE,
   COUNT
 };
 
 class Mouse {
  public:
   void init();
-  void loop();                                  // vong lap chinh
-  void tick(const TickIn& in, TickOut& out);    // ngat 1 kHz
+  void loop();
+  void tick(const TickIn& in, TickOut& out);
 
-  void start(Mode m);                           // nhu bam BTN_Start voi che do m
+  void start(Mode m);
   bool idle() const { return st_ == St::MENU; }
   const Maze& maze() const { return maze_; }
   Motion& motion() { return motion_; }
@@ -36,6 +37,7 @@ class Mouse {
   enum class Phase : uint8_t { TO_GOAL, IN_GOAL, SEARCH, HOME };
 
   void menu();
+  void go();
   void begin_run(Mode m);
   void end_run();
   void handle_fault();
@@ -43,8 +45,12 @@ class Mouse {
   void explore_begin(Phase ph, bool from_back);
   void explore_update();
   void explore_push(Dir d);
+  void follow_look();
   bool explore_target(CellMask& tgt);
-  void finish_home();
+  bool explore_decide(Dir& d, bool at_center, float creep);
+  void center_push(Dir d, bool front, float creep);
+  bool cell_known(int x, int y) const;
+  void finish_home(bool at_center = false, float creep = 0.0f);
 
   bool fast_begin(const cfg::RunParams& rp);
   bool return_begin();
@@ -66,8 +72,17 @@ class Mouse {
   Dir head_ = NORTH;
   uint8_t first_goal_ = 0;
   bool finishing_ = false;
+  bool follow_ = false;
+  enum class Look : uint8_t { NONE, WAIT_STOP, SAMPLE };
+  Look look_ = Look::NONE;
+  bool look_retry_ = false;
+  float look_adv_ = 0.0f;
+  uint32_t look_t_ = 0, look_ms_ = 0;
+  int look_n_ = 0, look_f_ = 0, look_l_ = 0, look_r_ = 0;
+  float look_sum_[cfg::IR_COUNT] = {};
+  bool obs_front_ = false;
   bool armed_cal_ = false;
-  bool at_center_ = false;   // robot dang o tam o xuat phat (luot 2, 3)
+  bool at_center_ = false;
   uint32_t t_run_ = 0, t_state_ = 0;
   uint32_t goal_ms_[4] = {};
   int runs_done_ = 0;
@@ -79,11 +94,11 @@ class Mouse {
   Dir end_head_ = NORTH;
   uint8_t end_cell_ = 0;
 
-  // nut bam co chong doi: chi doi trang thai khi muc doc on dinh >= BTN_STABLE_MS
   struct Btn {
     bool raw = false, down = false;
-    bool pressed = false, released = false;  // su kien trong lan poll nay
-    bool skip_release = false;               // nha cua lan bam da dung de dung robot -> bo qua
+    bool pressed = false, released = false;
+    bool skip_release = false;
+    bool long_fb = false;
     uint32_t t_raw = 0, t_down = 0;
   };
   static void poll_btn(Btn& b, bool raw, uint32_t now);
@@ -96,4 +111,4 @@ class Mouse {
   uint32_t t_log_ = 0;
 };
 
-}  // namespace mm
+}

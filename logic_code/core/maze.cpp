@@ -5,7 +5,7 @@ namespace mm {
 bool Maze::set_wall(int x, int y, Dir d, bool present) {
   if (!in_maze(x, y)) return false;
   const int nx = x + DX[d], ny = y + DY[d];
-  if (!in_maze(nx, ny)) return false;  // tuong bien luon co, khong cho sua
+  if (!in_maze(nx, ny)) return false;
   uint8_t& a = cells_[cell_id(x, y)];
   uint8_t& b = cells_[cell_id(nx, ny)];
   const Dir o = dir_back(d);
@@ -31,10 +31,8 @@ void Maze::reset() {
     cells_[cell_id(0, i)] |= (1u << WEST) | (16u << WEST);
     cells_[cell_id(cfg::N - 1, i)] |= (1u << EAST) | (16u << EAST);
   }
-  // O xuat phat (0,0): 3 mat tuong, mo ve phia bac
   set_wall(0, 0, EAST, true);
   set_wall(0, 0, NORTH, false);
-  // Vung dich 2x2 khong co tuong ben trong
   const int gx = cfg::GOAL_X0, gy = cfg::GOAL_Y0;
   set_wall(gx, gy, EAST, false);
   set_wall(gx, gy, NORTH, false);
@@ -60,4 +58,4 @@ bool Maze::sane() const {
   return wall(0, 0, EAST) && !wall(0, 0, NORTH);
 }
 
-}  // namespace mm
+}

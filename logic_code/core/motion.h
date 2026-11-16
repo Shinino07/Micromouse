@@ -5,16 +5,22 @@
 namespace mm {
 
 struct TickIn {
-  int32_t enc_l = 0, enc_r = 0;     // so dem cong don (chua doi dau)
-  float   gyro_z = 0;               // rad/s tho (con bias)
-  float   ir[cfg::IR_COUNT] = {};   // mm, cfg::IR_NONE neu khong thay
+  int32_t enc_l = 0, enc_r = 0;
+  float   gyro_z = 0;
+  bool    gyro_enc = false;
+  float   ir[cfg::IR_COUNT] = {};
   float   vbat = cfg::VBAT_NOMINAL;
 };
 struct TickOut { float duty_l = 0, duty_r = 0; };
 
-struct WallObs { bool left, right, front; float dl, dr, dfl, dfr; };
+struct WallObs {
+  bool left, right, front;
+  float dl, dr, dfl, dfr;
+  float fmin, fmax;
+  int fpct;
+  int fpct2;
+};
 
-// Chay trong ngat 1 kHz: tick(). Ham con lai goi tu vong lap chinh.
 class Motion {
  public:
   void init();
@@ -27,6 +33,13 @@ class Motion {
   void enable(bool on);
 
   bool take_obs(WallObs& o);
+  bool take_guard(float& mm, int& turn) {
+    if (!guard_hit_) return false;
+    guard_hit_ = false;
+    mm = guard_mm_;
+    turn = guard_turn_;
+    return true;
+  }
   bool fault() const { return fault_; }
   void clear_fault() { fault_ = false; }
 
@@ -55,6 +68,7 @@ class Motion {
   void edge_correction();
   void sense();
   void presample();
+  bool front_guard();
   void diag_track();
   void heading_from_wall(float e);
 
@@ -64,12 +78,18 @@ class Motion {
 
   Move mv_{};
   bool active_ = false;
-  float ms_ = 0;       // quang duong tham chieu trong move
+  float ms_ = 0;
   float t_move_ = 0;
   float th_start_ = 0;
   float phi_ = 0, w_piv_ = 0;
   bool sensed_ = false;
   bool pre_valid_ = false, pre_l_ = false, pre_r_ = false;
+  int fw_n_ = 0, fw_hit_ = 0, fw_hit2_ = 0;
+  int guard_n_ = 0;
+  volatile bool guard_hit_ = false;
+  float guard_mm_ = 0.0f;
+  int guard_turn_ = 0;
+  float fw_min_ = 300.0f, fw_max_ = 0.0f;
   bool settling_ = false;
 
   float s_ref_ = 0, v_ref_ = 0, a_ref_ = 0;
@@ -84,8 +104,8 @@ class Motion {
   float ir_raw_[cfg::IR_COUNT] = {};
   float ir_prev_[cfg::IR_COUNT] = {};
   float ir_f_[cfg::IR_COUNT] = {};
-  float blank_until_[2] = {};  // trai, phai: tat dieu khien tuong toi s nay
-  float ir_sf_[2] = {300.0f, 300.0f};  // mat ben trai/phai loc theo quang duong (bam tuong)
+  float blank_until_[2] = {};
+  float ir_sf_[2] = {300.0f, 300.0f};
   bool side_present_[2] = {};
   float present_since_[2] = {-1000.0f, -1000.0f};
   int last_edge_k_[2] = {-9, -9};
@@ -105,13 +125,13 @@ class Motion {
   float wall_dbg_ = 0;
   float i_pos_ = 0, i_ang_ = 0;
   float vbat_ = cfg::VBAT_NOMINAL;
-  float dmin_[2] = {}, dval_[2] = {}, ds_[2] = {};  // cuc tieu mat ben khi di cheo
+  float dmin_[2] = {}, dval_[2] = {}, ds_[2] = {};
   bool dvalid_[2] = {};
   bool darmed_[2] = {};
   static constexpr int WH_N = 16;
   float wh_s_[WH_N] = {}, wh_e_[WH_N] = {};
   int wh_n_ = 0;
-  float lat_est_ = 0;      // can dich sang trai bao nhieu mm (uoc luong khi di cheo)
+  float lat_est_ = 0;
   bool lat_valid_ = false;
   bool diag_active_ = false;
  public:
@@ -119,4 +139,4 @@ class Motion {
  private:
 };
 
-}  // namespace mm
+}

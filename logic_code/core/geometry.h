@@ -23,11 +23,10 @@ inline bool is_goal(int x, int y) {
 }
 inline bool is_goal(uint8_t c) { return is_goal(cell_x(c), cell_y(c)); }
 
-// Hanh dong trong 1 o: di thang, re trai, re phai (theo huong di vao o)
 enum Act : uint8_t { ACT_S = 0, ACT_L = 1, ACT_R = 2 };
 
-inline float heading_rad(Dir d) {  // NORTH = 0, quay trai la duong
+inline float heading_rad(Dir d) {
   return static_cast<float>(-static_cast<int>(d)) * 1.5707963f;
 }
 
-}  // namespace mm
+}

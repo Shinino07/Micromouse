@@ -11,7 +11,7 @@ inline float sgnf(float v) { return v > 0 ? 1.0f : (v < 0 ? -1.0f : 0.0f); }
 constexpr float V_CREEP = 20.0f;
 constexpr float V_TURN_MIN = 80.0f;
 constexpr float UNDERRUN_DECEL = 3000.0f;
-}  // namespace
+}
 
 void Motion::init() {
   head_ = tail_ = 0;
@@ -81,6 +81,10 @@ void Motion::start_next() {
   t_move_ = 0;
   sensed_ = false;
   pre_valid_ = false;
+  fw_n_ = fw_hit_ = fw_hit2_ = 0;
+  guard_n_ = 0;
+  fw_min_ = 300.0f;
+  fw_max_ = 0.0f;
   settling_ = false;
   th_start_ = th_ref_;
   phi_ = w_piv_ = 0;
@@ -99,15 +103,78 @@ void Motion::start_next() {
   present_since_[0] = present_since_[1] = ms_ - 1000.0f;
   if (mv_.type == MoveType::TURN) mv_.v_max = std::fmax(V_TURN_MIN, std::fmin(mv_.v_max, std::fmax(v_ref_, V_TURN_MIN)));
   if (mv_.type == MoveType::FRONT_ALIGN) {
-    // 2 mat cheo deu thay tuong truoc o gan (khi can xong ~48 mm)
     const bool wall = ir_f_[cfg::IR_DL] < 1.6f * cfg::DIAG_FRONT_NOM && ir_f_[cfg::IR_DR] < 1.6f * cfg::DIAG_FRONT_NOM;
     front_align_ = wall;
     if (!wall) active_ = false;
   }
 }
 
+bool Motion::front_guard() {
+  if (ms_ < cfg::GUARD_S0 || ms_ > cfg::GUARD_S1) {
+    guard_n_ = 0;
+    return false;
+  }
+  if (ir_raw_[cfg::IR_F] >= cfg::GUARD_MM) {
+    guard_n_ = 0;
+    return false;
+  }
+  if (++guard_n_ < 9) return false;
+  const bool open_l = ir_f_[cfg::IR_L] > cfg::SIDE_WALL_TH && ir_raw_[cfg::IR_L] > cfg::SIDE_WALL_TH;
+  const bool open_r = ir_f_[cfg::IR_R] > cfg::SIDE_WALL_TH && ir_raw_[cfg::IR_R] > cfg::SIDE_WALL_TH;
+  mv_.dir = !cfg::FOLLOW_CURVE ? 0 : (open_l ? 1 : (open_r ? -1 : 0));
+  const float axle_wall = ir_raw_[cfg::IR_F] + cfg::FRONT_MOVE_BIAS + cfg::IR_POSE[cfg::IR_F].fwd;
+  const float fwd_raw = axle_wall - (cfg::HALF - cfg::WALL_HALF);
+  if (cfg::FOLLOW_CURVE && mv_.dir == 0 && fwd_raw > cfg::DYN_FWD_MIN + cfg::DYN_WAIT_MARGIN) return false;
+  if (mv_.dir != 0) {
+    const float fwd = clampf(fwd_raw, cfg::DYN_FWD_MIN, cfg::DYN_FWD_MAX);
+    set_dyn_turn(fwd, cfg::HALF, 1.5707963f);
+    const TurnGeom& g = g_turn[T_DYN];
+    const int8_t dir = mv_.dir;
+    float v = std::sqrt(cfg::RUN_SEARCH.a_lat / g.kmax);
+    v = std::fmin(v, 0.9f * cfg::V_WHEEL_MAX / (1.0f + g.kmax * 0.5f * cfg::TRACK_MM));
+    v = std::fmax(V_TURN_MIN, std::fmin(v, std::fmax(v_ref_, V_TURN_MIN)));
+    mv_.type = MoveType::TURN;
+    mv_.turn = T_DYN;
+    mv_.dir = dir;
+    mv_.dist = g.pre + g.curve + g.post;
+    mv_.v_max = mv_.v_end = v;
+    mv_.flags = F_SENSE;
+    mv_.sense_at = mv_.dist - cfg::SENSE_BEFORE_EDGE;
+    mv_.edge_phase = -1.0f;
+    ms_ = 0.0f;
+    t_move_ = 0.0f;
+    th_start_ = th_ref_;
+    sensed_ = false;
+    pre_valid_ = false;
+    fw_n_ = fw_hit_ = fw_hit2_ = 0;
+    fw_min_ = 300.0f;
+    fw_max_ = 0.0f;
+    wall_active_ = false;
+    guard_mm_ = ir_raw_[cfg::IR_F];
+    guard_turn_ = dir;
+    guard_hit_ = true;
+    return true;
+  }
+  mv_.dist = std::fmin(cfg::HALF + 30.0f, ms_ + std::fmax(20.0f, ir_raw_[cfg::IR_F] - cfg::LOOK_STOP_MM));
+  mv_.v_end = 0.0f;
+  mv_.flags = static_cast<uint8_t>(mv_.flags & ~(F_SENSE | F_FGUARD));
+  guard_mm_ = ir_raw_[cfg::IR_F];
+  guard_turn_ = 0;
+  guard_hit_ = true;
+  return false;
+}
+
 void Motion::presample() {
-  if (!(mv_.flags & F_SENSE) || pre_valid_ || mv_.sense_at < cfg::SENSE_GAP) return;
+  if (!(mv_.flags & F_SENSE) || sensed_) return;
+  if (ms_ >= mv_.sense_at - cfg::SENSE_GAP) {
+    const float f = ir_raw_[cfg::IR_F];
+    fw_n_++;
+    if (f < cfg::FRONT_WALL_TH) fw_hit_++;
+    if (f < cfg::FRONT_MAYBE_TH) fw_hit2_++;
+    fw_min_ = std::fmin(fw_min_, f);
+    fw_max_ = std::fmax(fw_max_, f);
+  }
+  if (pre_valid_ || mv_.sense_at < cfg::SENSE_GAP) return;
   if (ms_ < mv_.sense_at - cfg::SENSE_GAP) return;
   pre_l_ = ir_f_[cfg::IR_L] < cfg::SIDE_WALL_TH;
   pre_r_ = ir_f_[cfg::IR_R] < cfg::SIDE_WALL_TH;
@@ -117,19 +184,19 @@ void Motion::presample() {
 void Motion::sense() {
   obs_.dl = ir_f_[cfg::IR_L];
   obs_.dr = ir_f_[cfg::IR_R];
-  obs_.dfl = ir_f_[cfg::IR_F];                                        // mat truoc
-  obs_.dfr = std::fmin(ir_f_[cfg::IR_DL], ir_f_[cfg::IR_DR]);         // mat cheo gan hon (chi de log)
-  // tuong ben phai thay o ca 2 lan lay mau (cach nhau SENSE_GAP) -> loai tia suot qua canh cot
+  obs_.dfl = ir_f_[cfg::IR_F];
+  obs_.dfr = std::fmin(ir_f_[cfg::IR_DL], ir_f_[cfg::IR_DR]);
   obs_.left = obs_.dl < cfg::SIDE_WALL_TH && (!pre_valid_ || pre_l_);
   obs_.right = obs_.dr < cfg::SIDE_WALL_TH && (!pre_valid_ || pre_r_);
-  // tuong cuoi o ke tiep: mat truoc S3 (luc lay mau tuong o ~124 mm, khong co tuong: > 250 mm)
-  obs_.front = ir_f_[cfg::IR_F] < cfg::FRONT_WALL_TH;
+  obs_.front = fw_n_ >= 6 ? (fw_hit_ * 4 >= fw_n_ * 3) : (ir_f_[cfg::IR_F] < cfg::FRONT_WALL_TH);
+  obs_.fmin = fw_n_ ? fw_min_ : ir_f_[cfg::IR_F];
+  obs_.fmax = fw_n_ ? fw_max_ : ir_f_[cfg::IR_F];
+  obs_.fpct = fw_n_ ? fw_hit_ * 100 / fw_n_ : -1;
+  obs_.fpct2 = fw_n_ ? fw_hit2_ * 100 / fw_n_ : (ir_f_[cfg::IR_F] < cfg::FRONT_MAYBE_TH ? 100 : 0);
   obs_ready_ = true;
   sensed_ = true;
 }
 
-// lech ngang (mm, + = robot lech PHAI -> can sang trai). Dung mat ben da loc theo quang duong; mat dang bao hoa
-// (qua sat tuong, doc dung im sai) thi bo va dung mat ben kia (da chay that o test_dc 2026-11-10)
 float Motion::wall_error(bool& valid) {
   const float dl = ir_sf_[0], dr = ir_sf_[1];
   const bool ok_l = dl < cfg::SIDE_WALL_TH && ir_raw_[cfg::IR_L] >= cfg::IR_SAT_MM[cfg::IR_L] && s_meas_ >= blank_until_[0];
@@ -138,10 +205,19 @@ float Motion::wall_error(bool& valid) {
   if (ok_l && ok_r) return 0.5f * ((dl - cfg::SIDE_NOM_L) - (dr - cfg::SIDE_NOM_R));
   if (ok_l) return dl - cfg::SIDE_NOM_L;
   if (ok_r) return cfg::SIDE_NOM_R - dr;
+  if (ir_raw_[cfg::IR_L] < cfg::IR_SAT_MM[cfg::IR_L] && s_meas_ >= blank_until_[0]) {
+    valid = true;
+    return cfg::IR_SAT_MM[cfg::IR_L] - cfg::SIDE_NOM_L;
+  }
+  if (ir_raw_[cfg::IR_R] < cfg::IR_SAT_MM[cfg::IR_R] && s_meas_ >= blank_until_[1]) {
+    valid = true;
+    return cfg::SIDE_NOM_R - cfg::IR_SAT_MM[cfg::IR_R];
+  }
   return 0.0f;
 }
 
 void Motion::edge_correction() {
+  if (!cfg::EDGE_CORR) return;
   if (mv_.edge_phase < 0 || std::fabs(th_ref_ - th_meas_) > 0.1f) return;
   const int ids[2] = {cfg::IR_L, cfg::IR_R};
   for (int i = 0; i < 2; i++) {
@@ -151,7 +227,6 @@ void Motion::edge_correction() {
     else if (!was && d < cfg::SIDE_WALL_TH) { side_present_[i] = true; present_since_[i] = ms_; }
     const bool fall = was && !side_present_[i], rise = !was && side_present_[i];
     if (!fall && !(rise && cfg::EDGE_RISE)) continue;
-    // mat tuong: tia vua qua het cot (mep o + 6); thay tuong/cot: tia vua cham cot (mep o - 6)
     const float axle_off = fall ? cfg::WALL_END_AXLE : cfg::WALL_START_AXLE;
     int* last = fall ? last_edge_k_ : last_rise_k_;
     const int k = static_cast<int>(std::lround((ms_ + axle_off - mv_.edge_phase) / cfg::CELL));
@@ -166,15 +241,12 @@ void Motion::edge_correction() {
   }
 }
 
-// Di cheo: cot hai ben xuat hien luan phien; cuc tieu so do mat ben = khoang cach toi goc cot
 void Motion::diag_track() {
   const int ids[2] = {cfg::IR_L, cfg::IR_R};
-  // dead-reckoning giua 2 lan do: lech goc lam robot troi ngang
   if (lat_valid_) lat_est_ -= v_ref_ * std::sin(th_meas_ - th_ref_) * DT;
   for (int i = 0; i < 2; i++) {
     const float d = ir_f_[ids[i]];
     if (!darmed_[i]) {
-      // chi bat dau do cot moi sau khi da qua han cot cu
       if (d > cfg::DIAG_POST_SEEN) { darmed_[i] = true; dmin_[i] = cfg::IR_NONE; }
       continue;
     }
@@ -188,7 +260,6 @@ void Motion::diag_track() {
       float e;
       if (other) e = 0.5f * ((i == 0 ? dval_[0] : dval_[0]) - dval_[1]);
       else e = i == 0 ? dval_[0] - cfg::DIAG_POST_NOM : cfg::DIAG_POST_NOM - dval_[1];
-      // tru phan da troi tu luc do toi gio (do tre bo loc ~ vai mm, bo qua)
       lat_est_ = e;
       lat_valid_ = true;
 #ifdef MM_DEBUG_LOG
@@ -204,10 +275,10 @@ void Motion::step_move() {
   switch (mv_.type) {
     case MoveType::STRAIGHT:
     case MoveType::DIAG: {
+      if ((mv_.flags & F_FGUARD) && !guard_hit_ && front_guard()) break;
       const float rem = mv_.dist - ms_;
       float vt = std::fmin(mv_.v_max, std::sqrt(std::fmax(0.0f, mv_.v_end * mv_.v_end + 2.0f * mv_.decel * rem)));
       if (mv_.v_end < 1.0f && rem > 0.0f) vt = std::fmax(vt, V_CREEP);
-      // gia toc kha thi giam dan theo toc do (suc phan dien dong cua motor)
       const float a_avail = (cfg::V_HEADROOM * vbat_ - cfg::KS_MOTOR - cfg::KV_MOTOR * v_ref_) / cfg::KA_MOTOR;
       const float acc = clampf(a_avail, 0.0f, mv_.accel);
       const float vn = v_ref_ < vt ? std::fmin(v_ref_ + acc * DT, vt) : vt;
@@ -288,7 +359,6 @@ void Motion::step_move() {
     case MoveType::FRONT_ALIGN:
       v_ref_ = a_ref_ = w_ref_ = al_ref_ = 0;
       wall_active_ = false;
-      // xong khi da thang + dung khoang cach (hoac het gio); chi gan lai goc gyro khi that su thang
       if (t_move_ >= mv_.dist || (t_move_ > (cfg::FA_FILTER ? 0.2f : 0.08f) && std::fabs(fa_ang_) < 0.004f && std::fabs(fa_dist_) < 1.0f &&
                                   std::fabs(w_meas_) < 0.2f && std::fabs(v_meas_) < 15.0f)) {
         front_align_ = false;
@@ -306,11 +376,9 @@ void Motion::step_move() {
   }
 }
 
-// Khu troi gyro bang tuong: do doc cua sai so ngang theo quang duong = lech goc that so voi me cung.
-// lech gyro o = (th_meas - th_ref) - lech_that,  lech_that = -de/ds  (e = can dich sang trai)
 void Motion::heading_from_wall(float e) {
   constexpr float STEP = 5.0f;
-  constexpr int WIN = 8;  // 40 mm
+  constexpr int WIN = 8;
   if (wh_n_ > 0 && s_meas_ - wh_s_[(wh_n_ - 1) % WH_N] < STEP) return;
   wh_s_[wh_n_ % WH_N] = s_meas_;
   wh_e_[wh_n_ % WH_N] = e;
@@ -356,14 +424,12 @@ void Motion::control(const TickIn& in, TickOut& out) {
 
   if (front_align_) {
     i_pos_ = i_ang_ = 0;
-    // 2 mat cheo 45 do nhin tuong truoc (mat truoc S3 bao hoa o khoang cach nay): diem cham tuong trong he robot
-    // -> goc tuong (a) va khoang cach truc banh -> tuong (x). Loc trung binh ~50 ms vi 1 mau don nhieu.
     const cfg::IrPose& pl = cfg::IR_POSE[cfg::IR_DL];
     const cfg::IrPose& pr = cfg::IR_POSE[cfg::IR_DR];
     const float rl = ir_f_[cfg::IR_DL], rr = ir_f_[cfg::IR_DR];
     const float xl = pl.fwd + rl * std::cos(pl.ang), yl = pl.lat + rl * std::sin(pl.ang);
     const float xr = pr.fwd + rr * std::cos(pr.ang), yr = pr.lat + rr * std::sin(pr.ang);
-    const float a_raw = std::atan2(xl - xr, yl - yr);   // > 0: robot dang lech trai so voi tuong
+    const float a_raw = std::atan2(xl - xr, yl - yr);
     const float d_raw = 0.5f * (xl + xr) - cfg::FRONT_ALIGN_X;
     if (t_move_ <= 2 * DT || !cfg::FA_FILTER) { fa_ang_ = a_raw; fa_dist_ = d_raw; }
     fa_ang_ += 0.02f * (a_raw - fa_ang_);
@@ -373,7 +439,6 @@ void Motion::control(const TickIn& in, TickOut& out) {
 #endif
     uf = clampf(cfg::KP_FRONT_DIST * fa_dist_ - cfg::KD_POS * v_meas_, -1.5f, 1.5f);
     ur = clampf(-cfg::KP_FRONT_ANG * fa_ang_, -1.5f, 1.5f) - cfg::KD_ANG * w_meas_;
-    // vuot ma sat tinh de con sua duoc sai so nho
     if (std::fabs(fa_dist_) > 0.7f) uf += cfg::KS_MOTOR * sgnf(uf);
     if (std::fabs(fa_ang_) > 0.004f) ur += cfg::KS_MOTOR * sgnf(ur);
   }
@@ -382,10 +447,8 @@ void Motion::control(const TickIn& in, TickOut& out) {
   const float wl = v_ref_ - w_ref_ * half, wr = v_ref_ + w_ref_ * half;
   if (std::fabs(wl) > 5.0f) vl += cfg::KS_MOTOR * sgnf(wl);
   if (std::fabs(wr) > 5.0f) vr += cfg::KS_MOTOR * sgnf(wr);
-  // Bu ma sat tinh luc dung (vd cuoi pivot): KP * lech nho < KS nen robot ket lai vai do khong sua duoc
-  // (do tren robot 2026-11-10: xoay 10 vong ket o +5.5 do). Tham chieu dung yen ma con lech -> them 0.8*KS.
   if (!front_align_ && v_ref_ == 0.0f && w_ref_ == 0.0f) {
-    if (std::fabs(e_th) > 0.006f) {   // ~0.35 do
+    if (std::fabs(e_th) > 0.006f) {
       const float k = 0.8f * cfg::KS_MOTOR * sgnf(e_th);
       vl -= k;
       vr += k;
@@ -435,13 +498,12 @@ void Motion::tick(const TickIn& in, TickOut& out) {
     }
     ir_f_[i] = 0.6f * ir_f_[i] + 0.4f * r;
   }
-  // mat ben loc theo quang duong (~SIDE_FILT_MM): chi dung cho bam tuong; bat mep tuong van dung ir_f_ (nhanh)
   {
     const float a_sf = std::fmin(1.0f, std::fabs(ds) / cfg::SIDE_FILT_MM + 0.002f);
     const int sid[2] = {cfg::IR_L, cfg::IR_R};
     for (int k = 0; k < 2; k++) {
       const float r = ir_raw_[sid[k]];
-      if (r >= 299.0f || ir_sf_[k] >= 299.0f) ir_sf_[k] = r;   // mat / thay lai tuong: nhan ngay
+      if (r >= 299.0f || ir_sf_[k] >= 299.0f) ir_sf_[k] = r;
       else ir_sf_[k] += a_sf * (r - ir_sf_[k]);
     }
   }
@@ -453,8 +515,9 @@ void Motion::tick(const TickIn& in, TickOut& out) {
     w_meas_ = 0;
     return;
   }
-  w_meas_ = (in.gyro_z - gyro_bias_) * cfg::GYRO_SIGN * cfg::GYRO_SCALE;
-  th_meas_ += w_meas_ * DT;
+  const float w_raw = (in.gyro_z - (in.gyro_enc ? 0.0f : gyro_bias_)) * cfg::GYRO_SIGN * cfg::GYRO_SCALE;
+  th_meas_ += w_raw * DT;
+  w_meas_ = in.gyro_enc ? 0.6f * w_meas_ + 0.4f * w_raw : w_raw;
 
   if (!enabled_ || fault_) return;
 
@@ -463,7 +526,6 @@ void Motion::tick(const TickIn& in, TickOut& out) {
     step_move();
     if (!active_ && head_ != tail_) { start_next(); }
   } else if (v_ref_ > 0.0f) {
-    // het lenh khi dang chay: phanh, quang duong du duoc cong vao move sau
     const float vn = std::fmax(0.0f, v_ref_ - UNDERRUN_DECEL * DT);
     a_ref_ = (vn - v_ref_) / DT;
     v_ref_ = vn;
@@ -478,4 +540,4 @@ void Motion::tick(const TickIn& in, TickOut& out) {
   control(in, out);
 }
 
-}  // namespace mm
+}

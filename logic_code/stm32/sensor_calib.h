@@ -1,5 +1,3 @@
-/* Sinh tu dong boi tools/fit_kn.py - khong sua tay.
- * d[mm] = IR_K[i] * value^(-IR_N[i]);  he so = 0 -> sensor chua hieu chuan */
 #ifndef SENSOR_CALIB_H
 #define SENSOR_CALIB_H
 

@@ -10,7 +10,7 @@
 | MCU | STM32F405RGT6, HSI 16 → 168 MHz, cấu hình chân như `Structure/micromouse_v2.ioc` |
 | Motor | Trái TIM8 (PC6 = CH1, PC7 = CH2), phải TIM4 (PB6, PB7), 20 kHz. **Băm xung SLOW DECAY**: một chân luôn mở, chân kia băm (1 − duty). Kiểu băm cũ (fast decay) làm bánh trôi, chạy vượt profile |
 | Encoder | Trái TIM3, phải TIM2. **271 xung/vòng bánh, 3.038 xung/mm**. Phải đếm ngược khi đi tiến |
-| Gyro | Chip ghi **ICM-20602** (bản clone), SPI2, CS = PB12, **lắp ngược dưới đáy** → `GYRO_SIGN = −1`. Mã WHO_AM_I không ổn định (0x2E / 0xFF / 0x3F), nên code khởi tạo theo bảng thanh ghi MPU-6500 rồi kiểm tra bằng gia tốc kế (≈ 1 g). Mỗi 200 ms có watchdog tự đánh thức lại nếu chip bị reset |
+| Gyro | Chip ghi **ICM-20602** (bản clone), SPI2, CS = PB12, **lắp ngược dưới đáy** → `GYRO_SIGN = −1`. Mã WHO_AM_I không ổn định (0x2E / 0xFF / 0x3F), nên code khởi tạo theo bảng thanh ghi MPU-6500 rồi kiểm tra bằng gia tốc kế (≈ 1 g). Mỗi 200 ms có watchdog ghi lại cấu hình nếu chip tự reset. **Reset 3 lần trong 3 s** (nguồn hoặc dây IMU chập chờn, log 10/11) thì robot bỏ gyro, tính góc quay bằng 2 encoder cho tới khi khởi động lại. Chạy được chế độ 1, nhưng góc trôi dần nên **không dùng để thi** |
 | IR | 5 cặp mắt, đèn phát bật/tắt theo 3 nhóm (PC2 trước, PC1 bên, PA5 chéo); giá trị = \|bật − tắt\|, d = k·v^−n |
 | Nút | **SW2 = Start (PA11)**, **SW3 = Mode (PA12)**, đều tích cực mức thấp |
 
@@ -36,16 +36,19 @@ Bố trí mắt (`cfg::IrId`):
 **Còn ước lượng (`[DO]`):** vị trí dọc `fwd` của mắt trước, mắt chéo và mắt bên trong `IR_POSE`, và `FRONT_ALIGN_X`. Hai giá trị này quyết định robot canh tường trước dừng đúng tâm ô và bắt mép tường đúng chỗ. Cách chỉnh nằm ở mục cuối.
 
 ## Cách robot chạy (chế độ AUTO)
-1. **Lượt 1, dò đường:** loang từ ô xuất phát tới đích, đi hết 2 ô đích, dò tiếp các ô có thể nằm trên đường ngắn nhất cho tới khi chứng minh xong (hoặc quá 240 s), rồi về ô xuất phát.
+1. **Lượt 1, dò đường:** loang từ ô xuất phát tới đích, đi hết 2 ô đích, dò tiếp các ô có thể nằm trên đường ngắn nhất cho tới khi chứng minh xong (hoặc quá 240 s), rồi về ô xuất phát. **Ô mới: dừng ở tâm ô, đứng yên nhìn 3 phía** rồi mới ghi bản đồ và chọn hướng (mắt trước chỉ tin trong ~14 cm, mắt bên ở mép ô có thể còn thấy đầu tường). Có tường trước thì bò tới cách tường ~38 mm, canh tường rồi xoay. Ô đã biết hết tường: chạy thẳng qua (có canh gác tường bất ngờ); rẽ thì cũng dừng-nhìn-xoay. Mô phỏng 16/11 (mắt giống robot thật): vòng loại tới đích lượt 1 sau ~187 s, cả buổi 3 lượt xong ~420 s; 20 mê cung ngẫu nhiên không lỗi.
 2. **Lượt 2, nhanh an toàn** (`RUN_SAFE`), về nhà, nghỉ ≥ 2.6 s rồi tự chạy tiếp.
 3. **Lượt 3, nhanh nhất** (`RUN_FAST`), về nhà.
 
 Bản đồ được lưu vào flash sau mỗi lượt. Đường nhanh tìm bằng Dijkstra theo thời gian, rồi biên dịch thành cua lớn 90°/180°, vào và ra chéo 45°/135°, V90 và đoạn chéo. Trước khi chạy, robot quét khe hở toàn quỹ đạo theo kích thước thân thật. Thiếu khe hở thì bỏ chéo, rồi bỏ cua lớn.
 
+**Chế độ 1 (FOLLOW, để test sân):** đi thẳng. Ở mép ô, nếu mắt trước *nghi* có tường thì robot dừng ở tâm ô, **đứng yên đọc lại** 60 ms rồi mới quyết định: tường thật cách mắt khoảng 26 mm, không có tường thì > 200 mm. Rẽ về phía trống (ưu tiên trái), ngõ cụt thì quay đầu, rẽ bằng xoay tại chỗ. Đang đi thẳng qua ô mà mắt trước mới thấy tường ở cuối ô (< 110 mm) thì robot phanh dừng ở tâm ô rồi nhìn lại. Mỗi ô ghi 1 dòng log `FOLLOW (x,y) T..[gần-xa %] L.. R..` và mỗi lần dừng ghi `dung nhin (x,y): T.. L.. R.. cheo .. ..`.
+
 ## Nút bấm
-- **SW3 (Mode):** đổi chế độ. Motor "click" N lần, tức chế độ N−1: 0 AUTO, 1 dò đường, 2 nhanh an toàn, 3 nhanh nhất, 4 test chạy thẳng 5 ô, 5 test xoay 10 vòng, 6 in IR, 7 xoá bản đồ.
-- **SW2 (Start):** bắt đầu, tính lúc **nhả** nút. Robot chờ 1 s, đo bias gyro 0.6 s rồi chạy.
-- **Đang chạy bấm SW2:** dừng ngay, lưu bản đồ, về menu. **Giữ SW2 ≥ 2 s:** khởi động lại chip, bản đồ vẫn còn.
+- **SW3 (Mode):** bấm nhanh để đổi chế độ. Robot **kêu N bíp**, tức chế độ N−1: 0 **AUTO (mặc định khi bật, bản thi)**, 1 đi thẳng + rẽ (test sân), 2 dò đường, 3 nhanh an toàn, 4 nhanh nhất, 5 test chạy thẳng 5 ô, 6 test xoay 10 vòng, 7 in IR, 8 xoá bản đồ. Muốn khoá ở chế độ 1 khi test sân: `LOCK_FOLLOW = true` (`core/config.h`) và `mode_ = Mode::FOLLOW` (`core/mouse.h`).
+- **Giữ SW3 khoảng 1 s (nghe 1 bíp) rồi nhả:** **bắt đầu** chế độ đang chọn. Robot chờ 1 s, đo bias gyro 0.6 s rồi chạy.
+- **Đang chạy, bấm SW3 (hoặc SW2):** dừng ngay, lưu bản đồ, về menu.
+- **SW2 (Start):** bấm rồi nhả là bắt đầu chế độ đang chọn; giữ ≥ 2 s là khởi động lại chip. Đã kiểm tra lại 16/11 bằng cách đọc thẳng chân PA11/PA12 qua SWD: cả 2 nút bấm/nhả sạch. Lần mất nguồn hôm 10/11 là do pin yếu và giắc pin lỏng, không phải do nút. SW3 giữ ~1 s vẫn bắt đầu được như SW2.
 - **FAULT** (lệch > 60 mm hoặc 0.6 rad trong 150 ms): tắt motor, lưu bản đồ, click 5 lần.
 
 ## Đưa lên robot
@@ -79,5 +82,8 @@ g++ -std=c++17 -O2 -o build/sim.exe core/*.cpp sim/sim_main.cpp
 build/sim.exe sim/mazes/vongloai.txt          # 3 luot tren map vong loai
 build/sim.exe --random 20 7                   # 20 me cung ngau nhien + 300 kiem tra lap duong
 build/sim.exe --clear sim/mazes/vongloai.txt  # khe ho tung chuyen dong
+SIM_MODE=1 build/sim.exe sim/mazes/chu_n.txt # che do 1 trong me cung chu n (giong san test)
+SIM_FSPIKE=0.1 ...                             # mat truoc doc nham 10% so mau (thu chong nhieu)
+SIM_NOGYRO=0 ...                               # IMU hong: tinh goc bang encoder tu dau (hoac sau N ms)
 ```
 Mô phỏng dùng đúng `config.h`: mô hình motor thật, gyro lắp ngược, encoder 3.038 xung/mm, mắt IR bão hoà khi quá gần. Sửa `config.h` xong nên chạy lại mô phỏng trước khi nạp.

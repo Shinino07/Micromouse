@@ -4,7 +4,7 @@ namespace mm {
 
 namespace {
 constexpr int NC = cfg::N * cfg::N;
-constexpr int NS = NC * 4 * 3;  // (o, huong vao, hanh dong o truoc)
+constexpr int NS = NC * 4 * 3;
 constexpr uint16_t NONE = 0xFFFF;
 
 uint32_t g_cost[NS];
@@ -63,7 +63,7 @@ uint16_t step_cost(Act prev, Act a) {
   if (prev == ACT_S) return cfg::COST_TURN;
   return prev == a ? cfg::COST_SAME_TURN : cfg::COST_ZIGZAG;
 }
-}  // namespace
+}
 
 CellMask goal_mask() {
   CellMask m;
@@ -99,7 +99,7 @@ void flood(const Maze& m, const CellMask& targets, bool unknown_open, uint16_t d
 }
 
 bool explore_step(const Maze& m, const uint16_t dist[], int x, int y, Dir heading, Dir& out) {
-  static const int ORDER[4] = {0, -1, 1, 2};  // thang, trai, phai, quay lui
+  static const int ORDER[4] = {0, -1, 1, 2};
   uint16_t best = FLOOD_INF;
   int best_rank = 99;
   for (int k = 0; k < 4; k++) {
@@ -107,7 +107,6 @@ bool explore_step(const Maze& m, const uint16_t dist[], int x, int y, Dir headin
     if (!m.passable(x, y, d, true)) continue;
     const uint16_t v = dist[cell_id(x + DX[d], y + DY[d])];
     if (v == FLOOD_INF) continue;
-    // uu tien o chua tham khi bang diem
     const int rank = k + (m.visited(x + DX[d], y + DY[d]) ? 4 : 0);
     if (v < best || (v == best && rank < best_rank)) { best = v; best_rank = rank; out = d; }
   }
@@ -146,7 +145,6 @@ bool find_route(const Maze& m, uint8_t start, Dir heading, const CellMask& targe
   }
   if (found == NONE) return false;
 
-  // Truy vet: moi trang thai (o, huong vao, act o truoc)
   uint16_t chain[NC + 2];
   int len = 0;
   for (uint16_t s = found; s != NONE; s = g_parent[s]) chain[len++] = s;
@@ -157,11 +155,10 @@ bool find_route(const Maze& m, uint8_t start, Dir heading, const CellMask& targe
   for (int i = 0; i < len; i++) {
     const uint16_t s = chain[len - 1 - i];
     out.cell[i + 1] = s_cell(s);
-    // act cua o i+1 = "act o truoc" cua trang thai ke tiep; o cuoi di thang
     out.act[i + 1] = (i + 1 < len) ? s_prev(chain[len - 2 - i]) : ACT_S;
   }
   out.cost = g_cost[found];
   return true;
 }
 
-}  // namespace mm
+}
